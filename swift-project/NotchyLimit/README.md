@@ -276,10 +276,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## Maintainer Handoff
 
-For a new development session, start with [the verified project state](docs/PROJECT_STATE.md)
-and [the project update workflow](docs/UPDATE_PROJECT_WORKFLOW.md). These files
-record the current branch, release-signing setup, Keychain incident fix,
-verification status, and the rules for keeping future handoffs complete.
+The canonical project context, decisions, open points, and session handoffs
+live in the Extended Brain vault under `02 Projekte/Notchy Limit`. For local
+build and release commands, use [BUILDING.md](docs/BUILDING.md). Repository
+documentation is a technical reference and is not a second project-status
+database.
 
 ---
 
