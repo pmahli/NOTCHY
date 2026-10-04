@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Security
 
 /// Reads Claude OAuth credentials, preferring the Claude CLI / Claude Code login.
@@ -16,6 +17,13 @@ struct ClaudeOAuthCredential {
     let expiresAt: Date?
     let orgId: String?
 
+    // Claude Code's item belongs to another app, so every uncached read may
+    // invoke the Keychain ACL. Serialize the first read and retain the value
+    // for this app launch to prevent concurrent prompt storms.
+    private static let cacheLock = NSLock()
+    private static var cachedCredential: ClaudeOAuthCredential?
+    private static var keychainReadAttempted = false
+
     var isLikelyExpired: Bool {
         guard let exp = expiresAt else { return false }
         return exp < Date().addingTimeInterval(30)
@@ -25,8 +33,32 @@ struct ClaudeOAuthCredential {
 
     static func readFromDisk() -> ClaudeOAuthCredential? {
         if let data = fileData(), let cred = parse(from: data) { return cred }
-        if let data = keychainData(), let cred = parse(from: data) { return cred }
-        return nil
+
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+
+        if let cachedCredential, !cachedCredential.isLikelyExpired {
+            return cachedCredential
+        }
+        cachedCredential = nil
+
+        // Only the first access may show UI. Background polls and status
+        // checks must fail quietly if the item still needs authentication.
+        let allowPrompt = !keychainReadAttempted
+        keychainReadAttempted = true
+        guard let data = keychainData(allowPrompt: allowPrompt),
+              let cred = parse(from: data) else { return nil }
+        cachedCredential = cred
+        return cred
+    }
+
+    /// Clears a stale OAuth value after the provider reports 401/403. The
+    /// next read may refresh the item, but will not create another prompt in
+    /// the background because the access attempt has already happened.
+    static func invalidateCache() {
+        cacheLock.lock()
+        cachedCredential = nil
+        cacheLock.unlock()
     }
 
     /// Returns true only when Notchy can actually read and parse a usable OAuth
@@ -91,17 +123,26 @@ struct ClaudeOAuthCredential {
 
     private static let keychainService = "Claude Code-credentials"
 
-    /// Decrypts the Keychain blob (may prompt for access on first read).
-    private static func keychainData() -> Data? {
+    /// Decrypts the Keychain blob. Only the first access is interactive;
+    /// repeated background reads use the non-interactive failure mode.
+    private static func keychainData(allowPrompt: Bool) -> Data? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseOperationPrompt as String: "Notchy wants to read your Claude Code OAuth token from Keychain."
+            kSecMatchLimit as String: kSecMatchLimitOne
         ]
+        let authenticationContext = LAContext()
+        if allowPrompt {
+            authenticationContext.localizedReason =
+                "Notchy wants to read your Claude Code OAuth token from Keychain."
+        } else {
+            authenticationContext.interactionNotAllowed = true
+        }
+        var authenticatedQuery = query
+        authenticatedQuery[kSecUseAuthenticationContext as String] = authenticationContext
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+        guard SecItemCopyMatching(authenticatedQuery as CFDictionary, &item) == errSecSuccess,
               let data = item as? Data else { return nil }
         return data
     }

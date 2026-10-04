@@ -20,8 +20,12 @@ final class ClaudeUsageMappingTests: XCTestCase {
 
         XCTAssertEqual(snapshot.providerId, .claude)
         XCTAssertEqual(snapshot.primaryWindow.percentUsed, 0.425, accuracy: 0.001)
-        XCTAssertEqual(snapshot.secondaryWindow?.percentUsed, 0.610, accuracy: 0.001)
-        XCTAssertEqual(snapshot.tertiaryWindow?.percentUsed, 0.280, accuracy: 0.001)
+        guard let secondary = snapshot.secondaryWindow,
+              let tertiary = snapshot.tertiaryWindow else {
+            return XCTFail("Expected secondary and tertiary usage windows")
+        }
+        XCTAssertEqual(secondary.percentUsed, 0.610, accuracy: 0.001)
+        XCTAssertEqual(tertiary.percentUsed, 0.280, accuracy: 0.001)
         XCTAssertNotNil(snapshot.primaryWindow.resetAt)
     }
 

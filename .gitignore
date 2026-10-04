@@ -32,6 +32,7 @@ credentials.json
 *credentials.json*
 *.key
 .credentials
+DevCertificate/
 
 # Build artefacts
 build/

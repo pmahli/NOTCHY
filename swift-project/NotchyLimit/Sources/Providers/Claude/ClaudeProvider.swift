@@ -35,19 +35,24 @@ final class ClaudeProvider: UsageProvider {
         // OAuth token (Claude Code) → api.anthropic.com/api/oauth/usage.
         // Session cookie (claude.ai) → claude.ai/api/organizations/{org}/usage.
         // Both return the same five_hour / seven_day / seven_day_sonnet shape.
-        let data: Data
-        switch ctx.auth {
-        case .bearer:
-            data = try await get(url: ClaudeEndpoint.oauthUsage, auth: ctx.auth, oauthUsage: true)
-        case .cookie:
-            data = try await get(url: ClaudeEndpoint.usage(orgId: ctx.orgId), auth: ctx.auth)
-        }
-
         do {
-            let dto = try JSONDecoder().decode(ClaudeUsageDTO.self, from: data)
-            return try ClaudeUsageMapper.snapshot(from: dto)
-        } catch let e as ProviderError { throw e }
-        catch { throw ProviderError.decoding(error.localizedDescription) }
+            let data: Data
+            switch ctx.auth {
+            case .bearer:
+                data = try await get(url: ClaudeEndpoint.oauthUsage, auth: ctx.auth, oauthUsage: true)
+            case .cookie:
+                data = try await get(url: ClaudeEndpoint.usage(orgId: ctx.orgId), auth: ctx.auth)
+            }
+
+            do {
+                let dto = try JSONDecoder().decode(ClaudeUsageDTO.self, from: data)
+                return try ClaudeUsageMapper.snapshot(from: dto)
+            } catch let e as ProviderError { throw e }
+            catch { throw ProviderError.decoding(error.localizedDescription) }
+        } catch let error as ProviderError where error == .unauthorized && ctx.usesClaudeOAuth {
+            ClaudeOAuthCredential.invalidateCache()
+            throw error
+        }
     }
 
     /// Current auth tier — used by diagnostics + onboarding hint.
@@ -69,6 +74,7 @@ final class ClaudeProvider: UsageProvider {
     private struct AuthContext {
         let auth: Auth
         let orgId: String
+        let usesClaudeOAuth: Bool
     }
 
     /// Tries OAuth, falls back to cookie. Throws `missingCredentials` if neither
@@ -78,7 +84,7 @@ final class ClaudeProvider: UsageProvider {
 
         // ── Tier 1: User-saved setup token ─────────────────────────────────
         if let token = stored?.bearerToken {
-            return AuthContext(auth: .bearer(token), orgId: "")
+            return AuthContext(auth: .bearer(token), orgId: "", usesClaudeOAuth: false)
         }
 
         // ── Tier 2: Claude Code OAuth ──────────────────────────────────────
@@ -95,11 +101,19 @@ final class ClaudeProvider: UsageProvider {
             // Claude Code stores the org id alongside the token — use it directly
             // and skip the bootstrap round-trip.
             if let orgId = oauthCred.orgId {
-                return AuthContext(auth: .bearer(oauthCred.accessToken), orgId: orgId)
+                return AuthContext(
+                    auth: .bearer(oauthCred.accessToken),
+                    orgId: orgId,
+                    usesClaudeOAuth: true
+                )
             }
             // The OAuth usage endpoint does not require an organization id.
             // Avoid the claude.ai bootstrap shape, which is not stable for OAuth.
-            return AuthContext(auth: .bearer(oauthCred.accessToken), orgId: "")
+            return AuthContext(
+                auth: .bearer(oauthCred.accessToken),
+                orgId: "",
+                usesClaudeOAuth: true
+            )
         }
 
         // ── Tier 3: Session cookie ─────────────────────────────────────────
@@ -109,10 +123,10 @@ final class ClaudeProvider: UsageProvider {
     private func cookieAuthContext() async throws -> AuthContext {
         let cookie = try currentCookie()
         if let orgFromCookie = ClaudeCredential(cookie: cookie).orgIdFromCookie {
-            return AuthContext(auth: .cookie(cookie), orgId: orgFromCookie)
+            return AuthContext(auth: .cookie(cookie), orgId: orgFromCookie, usesClaudeOAuth: false)
         }
         let orgId = try await bootstrapOrgId(auth: .cookie(cookie))
-        return AuthContext(auth: .cookie(cookie), orgId: orgId)
+        return AuthContext(auth: .cookie(cookie), orgId: orgId, usesClaudeOAuth: false)
     }
 
     private func bootstrapOrgId(auth: Auth) async throws -> String {

@@ -17,6 +17,10 @@ APP_CONTENTS="$APP_BUNDLE/Contents"
 SOURCES_DIR="$PROJECT_DIR/Sources"
 ASSETS_DIR="$SOURCES_DIR/Resources/Assets.xcassets/AppIcon.appiconset"
 SDK=$(xcrun --show-sdk-path --sdk macosx)
+# Local builds remain ad-hoc by default. Supplying a Developer ID identity
+# produces a stable code identity suitable for persistent Keychain approval.
+SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
+ENTITLEMENTS="$SOURCES_DIR/Resources/NotchyLimit.entitlements"
 
 echo "==> Cleaning previous build artifacts"
 rm -rf "$BUILD_DIR"
@@ -47,11 +51,18 @@ if [[ "${USE_XCODEBUILD:-0}" == "1" ]]; then
   fi
   cp -R "$APP_BUILT_PATH" "$BUILD_DIR/"
   xattr -cr "$APP_BUNDLE" 2>/dev/null || true
-  echo "==> Ad-hoc signing the bundle (codesign --sign -)"
-  codesign --force --deep --sign - "$APP_BUNDLE" 2>/dev/null \
-    && codesign --verify --strict "$APP_BUNDLE" 2>/dev/null \
-    && echo "    ad-hoc signature OK" \
-    || echo "    (ad-hoc signing skipped/failed — app still runs locally)"
+  if [[ "$SIGNING_IDENTITY" == "-" ]]; then
+    echo "==> Ad-hoc signing local development bundle"
+    codesign --force --deep --sign - "$APP_BUNDLE" 2>/dev/null \
+      && codesign --verify --strict "$APP_BUNDLE" 2>/dev/null \
+      && echo "    ad-hoc signature OK" \
+      || echo "    (ad-hoc signing skipped/failed — app still runs locally)"
+  else
+    echo "==> Signing bundle with $SIGNING_IDENTITY"
+    codesign --force --deep --options runtime --entitlements "$ENTITLEMENTS" \
+      --sign "$SIGNING_IDENTITY" "$APP_BUNDLE"
+    codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+  fi
   echo "==> Built (xcodebuild): $BUILD_DIR/$APP_NAME.app"
   echo "Run with: open $BUILD_DIR/$APP_NAME.app"
   exit 0
@@ -154,19 +165,33 @@ iconutil -c icns "$ICONSET" -o "$APP_CONTENTS/Resources/AppIcon.icns"
 # Strip quarantine attribute so macOS doesn't block launch
 xattr -cr "$APP_BUNDLE" 2>/dev/null || true
 
-# Ad-hoc sign the whole bundle (no Developer ID needed). This seals the
-# Info.plist + resources so a downloaded/quarantined copy shows the mild
+# Sign the whole bundle. Local development defaults to ad-hoc; release builds
+# pass SIGNING_IDENTITY='Developer ID Application: ...' for a stable identity.
+# This seals the Info.plist + resources so a downloaded/quarantined copy shows the mild
 # "unidentified developer" prompt (right-click → Open) instead of the scary
 # "app is damaged" error you get from a half-signed bundle.
-echo "==> Ad-hoc signing the bundle (codesign --sign -)"
-codesign --force --deep --sign - "$APP_BUNDLE" 2>/dev/null \
-  && codesign --verify --strict "$APP_BUNDLE" 2>/dev/null \
-  && echo "    ad-hoc signature OK" \
-  || echo "    (ad-hoc signing skipped/failed — app still runs locally)"
+if [[ "$SIGNING_IDENTITY" == "-" ]]; then
+  echo "==> Ad-hoc signing local development bundle"
+  codesign --force --deep --sign - "$APP_BUNDLE" 2>/dev/null \
+    && codesign --verify --strict "$APP_BUNDLE" 2>/dev/null \
+    && echo "    ad-hoc signature OK" \
+    || echo "    (ad-hoc signing skipped/failed — app still runs locally)"
+else
+  echo "==> Signing bundle with $SIGNING_IDENTITY"
+  codesign --force --deep --options runtime --entitlements "$ENTITLEMENTS" \
+    --sign "$SIGNING_IDENTITY" "$APP_BUNDLE"
+  codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+fi
 
 echo ""
-echo "==> Built (unsigned, local use only): $APP_BUNDLE"
+if [[ "$SIGNING_IDENTITY" == "-" ]]; then
+  echo "==> Built (ad-hoc, local use only): $APP_BUNDLE"
+else
+  echo "==> Built (Developer ID signed): $APP_BUNDLE"
+fi
 echo "    Run with: open $APP_BUNDLE"
 echo ""
-echo "  This binary is unsigned. Do not share or distribute it."
-echo "  For distribution use: USE_XCODEBUILD=1 bash scripts/build.sh"
+if [[ "$SIGNING_IDENTITY" == "-" ]]; then
+  echo "  This is an ad-hoc local build. Do not share or distribute it."
+  echo "  For a stable identity: SIGNING_IDENTITY='Developer ID Application: ...' bash scripts/build.sh"
+fi

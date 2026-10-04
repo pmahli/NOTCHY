@@ -81,9 +81,7 @@ final class MenuBarController: NSObject {
 
     /// Clean, Apple-native menu-bar look: a monochrome template glyph of the
     /// Notchy mascot that auto-adapts to the menu bar (light/dark, selected),
-    /// followed by a compact value. Colour appears only when it carries meaning
-    /// — a warning/critical level or an active outage — the way macOS tints the
-    /// battery red when it's low.
+    /// followed by a compact value.
     private func updateButtonAppearance() {
         guard let button = statusItem?.button else { return }
 
@@ -104,28 +102,17 @@ final class MenuBarController: NSObject {
             value = "\(Int((appState.sessionPercent * 100).rounded()))%"
         }
 
-        // Tint: nil = monochrome (adapts to the menu bar). Colour only when meaningful.
-        let tint: NSColor?
-        if appState.activeIncident != nil {
-            tint = .systemOrange
-        } else {
-            switch appState.combinedStatus {
-            case .warning:  tint = NSColor(red: 1.00, green: 0.78, blue: 0.20, alpha: 1)
-            case .critical: tint = NSColor(red: 1.00, green: 0.40, blue: 0.38, alpha: 1)
-            default:        tint = nil
-            }
-        }
-        button.contentTintColor = tint
+        // Keep the status item itself untinted so AppKit can choose readable
+        // menu-bar colors in light, dark, and highlighted states.
+        button.contentTintColor = nil
 
         if value.isEmpty {
             button.imagePosition = .imageOnly
-            button.attributedTitle = NSAttributedString(string: "")
+            button.title = ""
         } else {
             button.imagePosition = .imageLeading
-            button.attributedTitle = NSAttributedString(string: " \(value)", attributes: [
-                .foregroundColor: tint ?? NSColor.labelColor,
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .medium)
-            ])
+            button.font = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .medium)
+            button.title = " \(value)"
         }
 
         if let incident = appState.activeIncident {

@@ -46,6 +46,16 @@ export DEVELOPER_ID_APP="Developer ID Application: Your Name (TEAMID)"
 ./scripts/sign_and_notarize.sh
 ```
 
+For a locally installed build with a stable Keychain identity, pass the same
+Developer ID identity to the build script:
+
+```bash
+SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./scripts/build.sh
+```
+
+Ad-hoc builds are suitable for development only. macOS may not preserve
+Keychain "Always Allow" decisions across changing ad-hoc binaries.
+
 This hard-runtime-signs the `.app`, signs the DMG, submits to Apple, waits,
 and staples the ticket.
 
