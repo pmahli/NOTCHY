@@ -274,6 +274,13 @@ PRs welcome. Open issues:
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
+## Maintainer Handoff
+
+For a new development session, start with [the verified project state](docs/PROJECT_STATE.md)
+and [the project update workflow](docs/UPDATE_PROJECT_WORKFLOW.md). These files
+record the current branch, release-signing setup, Keychain incident fix,
+verification status, and the rules for keeping future handoffs complete.
+
 ---
 
 ## Disclaimer
