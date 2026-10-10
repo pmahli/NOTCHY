@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Security
 import os.log
 
@@ -28,6 +29,10 @@ public final class KeychainStore {
     /// 5-minute usage poll never re-triggers a Keychain prompt. Writes/deletes
     /// keep the cache coherent.
     private var cache: [String: Data] = [:]
+    /// Accounts that have already had their one interactive read attempt in
+    /// this process. A cancelled/denied read must not prompt again during a
+    /// background poll; an explicit write resets the account state.
+    private var readAttempted: Set<String> = []
     private let lock = NSLock()
 
     public init(service: String) { self.service = service }
@@ -53,7 +58,10 @@ public final class KeychainStore {
 
         let status = SecItemAdd(query as CFDictionary, nil)
         if status == errSecSuccess {
-            lock.lock(); cache[account] = data; lock.unlock()
+            lock.lock()
+            cache[account] = data
+            readAttempted.remove(account)
+            lock.unlock()
         } else {
             logger.error("Keychain write failed: OSStatus \(status, privacy: .public)")
         }
@@ -65,15 +73,26 @@ public final class KeychainStore {
             lock.unlock()
             return cached
         }
+        let allowPrompt = !readAttempted.contains(account)
+        readAttempted.insert(account)
         lock.unlock()
 
-        let query: [String: Any] = [
+        var query: [String: Any] = [
             kSecClass as String:       kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecReturnData as String:  true,
             kSecMatchLimit as String:  kSecMatchLimitOne,
         ]
+        let authenticationContext = LAContext()
+        if allowPrompt {
+            authenticationContext.localizedReason =
+                "Notchy wants to read a saved provider credential from Keychain."
+        } else {
+            authenticationContext.interactionNotAllowed = true
+        }
+        query[kSecUseAuthenticationContext as String] = authenticationContext
+
         var item: AnyObject?
         guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
               let data = item as? Data else { return nil }
@@ -90,7 +109,10 @@ public final class KeychainStore {
             kSecAttrAccount as String: account,
         ]
         let status = SecItemDelete(query as CFDictionary)
-        lock.lock(); cache[account] = nil; lock.unlock()
+        lock.lock()
+        cache[account] = nil
+        readAttempted.remove(account)
+        lock.unlock()
         return status == errSecSuccess || status == errSecItemNotFound
     }
 }
