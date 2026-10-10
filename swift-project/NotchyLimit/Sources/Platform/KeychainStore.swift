@@ -14,24 +14,20 @@ private let logger = Logger(subsystem: "com.notchylimit.NotchyLimit", category: 
 ///  - Access is governed by the default ACL: the app that created an item can
 ///    read it back without a prompt **once it has a stable code signature**.
 ///
-/// Prompt behaviour: macOS keys keychain access to the app's code-signing
-/// identity. A signed + notarized build reads its own items silently (and any
-/// one-time "Always Allow" sticks). Unsigned/ad-hoc dev builds present a
-/// changing identity, so macOS may still prompt — but the in-memory cache below
-/// collapses that to at most one prompt per credential per launch instead of
-/// one on every usage poll.
+/// Prompt behaviour: background polling must never open an authentication UI.
+/// A signed + notarized build can read items it is already trusted for silently;
+/// items that still require user interaction are treated as unavailable until
+/// the user explicitly saves the credential again from Settings.
 public final class KeychainStore {
     private let service: String
 
     /// In-memory cache of decrypted items, keyed by account. The first read of
-    /// each credential hits the Keychain (and may prompt on unsigned builds);
-    /// every subsequent read in the same launch is served from memory, so the
-    /// 5-minute usage poll never re-triggers a Keychain prompt. Writes/deletes
-    /// keep the cache coherent.
+    /// each credential hits the Keychain; every subsequent read in the same
+    /// launch is served from memory. Writes/deletes keep the cache coherent.
     private var cache: [String: Data] = [:]
-    /// Accounts that have already had their one interactive read attempt in
-    /// this process. A cancelled/denied read must not prompt again during a
-    /// background poll; an explicit write resets the account state.
+    /// Accounts that have already had a read attempt in this process. A
+    /// cancelled/denied read must not be retried during background polling; an
+    /// explicit write resets the account state.
     private var readAttempted: Set<String> = []
     private let lock = NSLock()
 
@@ -73,7 +69,6 @@ public final class KeychainStore {
             lock.unlock()
             return cached
         }
-        let allowPrompt = !readAttempted.contains(account)
         readAttempted.insert(account)
         lock.unlock()
 
@@ -84,13 +79,12 @@ public final class KeychainStore {
             kSecReturnData as String:  true,
             kSecMatchLimit as String:  kSecMatchLimitOne,
         ]
+        // This method is used by status checks and background usage polling.
+        // Never let a failed ACL lookup turn into a password dialog every few
+        // minutes. An explicit save from Settings recreates the item with the
+        // current signed app identity.
         let authenticationContext = LAContext()
-        if allowPrompt {
-            authenticationContext.localizedReason =
-                "Notchy wants to read a saved provider credential from Keychain."
-        } else {
-            authenticationContext.interactionNotAllowed = true
-        }
+        authenticationContext.interactionNotAllowed = true
         query[kSecUseAuthenticationContext as String] = authenticationContext
 
         var item: AnyObject?

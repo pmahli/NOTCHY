@@ -18,11 +18,10 @@ struct ClaudeOAuthCredential {
     let orgId: String?
 
     // Claude Code's item belongs to another app, so every uncached read may
-    // invoke the Keychain ACL. Serialize the first read and retain the value
-    // for this app launch to prevent concurrent prompt storms.
+    // invoke the Keychain ACL. Serialize reads and retain the value for this
+    // app launch to prevent concurrent prompt storms.
     private static let cacheLock = NSLock()
     private static var cachedCredential: ClaudeOAuthCredential?
-    private static var keychainReadAttempted = false
 
     var isLikelyExpired: Bool {
         guard let exp = expiresAt else { return false }
@@ -42,11 +41,7 @@ struct ClaudeOAuthCredential {
         }
         cachedCredential = nil
 
-        // Only the first access may show UI. Background polls and status
-        // checks must fail quietly if the item still needs authentication.
-        let allowPrompt = !keychainReadAttempted
-        keychainReadAttempted = true
-        guard let data = keychainData(allowPrompt: allowPrompt),
+        guard let data = keychainData(),
               let cred = parse(from: data) else { return nil }
         cachedCredential = cred
         return cred
@@ -123,9 +118,10 @@ struct ClaudeOAuthCredential {
 
     private static let keychainService = "Claude Code-credentials"
 
-    /// Decrypts the Keychain blob. Only the first access is interactive;
-    /// repeated background reads use the non-interactive failure mode.
-    private static func keychainData(allowPrompt: Bool) -> Data? {
+    /// Decrypts the Keychain blob without opening an authentication UI. This
+    /// path is reached from the five-minute usage poll and must fail quietly if
+    /// the item is not already trusted for the signed Notchy application.
+    private static func keychainData() -> Data? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
@@ -133,12 +129,7 @@ struct ClaudeOAuthCredential {
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
         let authenticationContext = LAContext()
-        if allowPrompt {
-            authenticationContext.localizedReason =
-                "Notchy wants to read your Claude Code OAuth token from Keychain."
-        } else {
-            authenticationContext.interactionNotAllowed = true
-        }
+        authenticationContext.interactionNotAllowed = true
         var authenticatedQuery = query
         authenticatedQuery[kSecUseAuthenticationContext as String] = authenticationContext
         var item: CFTypeRef?
